@@ -1,0 +1,15 @@
+{
+  "name": "hackathon-tracker",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Personal hackathon tracker — dashboard, manual add, and discovery from public listing sites.",
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "dev": "npm run dev --workspace frontend",
+    "build": "npm run build --workspace frontend",
+    "preview": "npm run preview --workspace frontend",
+    "scrape": "npm run scrape --workspace backend",
+    "test": "npm run test --workspace frontend && npm run test --workspace backend",
+    "test:hooks": "node .claude/hooks/block-social-scraping.test.mjs"
+  }
+}
