@@ -134,10 +134,18 @@ export function absoluteUrl(href, base) {
  * Shape and validate one scraped row. Returns null for anything unusable, so a
  * single malformed listing skips itself instead of failing the run.
  *
- * @param {{name: unknown, platform: string, source_url: unknown, deadline: unknown}} row
- * @returns {{name: string, platform: string, source_url: string, deadline: string|null}|null}
+ * `location`, `entryFee` and `prizeMoney` are free text, not typed amounts —
+ * each platform states them differently ("Free", "₹500", "Online", "$5,000 in
+ * prizes"), and a listing missing one of them is normal, not an error.
+ *
+ * @param {{name: unknown, platform: string, source_url: unknown, deadline: unknown,
+ *   location?: unknown, entryFee?: unknown, prizeMoney?: unknown}} row
+ * @returns {{name: string, platform: string, source_url: string, deadline: string|null,
+ *   location: string|null, entryFee: string|null, prizeMoney: string|null}|null}
  */
-export function normalizeRow({ name, platform, source_url: sourceUrl, deadline }) {
+export function normalizeRow({
+  name, platform, source_url: sourceUrl, deadline, location, entryFee, prizeMoney,
+}) {
   const cleanName = cleanText(name);
   const cleanUrl = typeof sourceUrl === 'string' ? sourceUrl.trim() : null;
 
@@ -156,5 +164,8 @@ export function normalizeRow({ name, platform, source_url: sourceUrl, deadline }
     platform,
     source_url: cleanUrl,
     deadline: toIsoDate(deadline),
+    location: cleanText(location),
+    entryFee: cleanText(entryFee),
+    prizeMoney: cleanText(prizeMoney),
   };
 }

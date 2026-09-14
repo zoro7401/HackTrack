@@ -57,6 +57,11 @@ export function parseNextData(html) {
           ? `https://${slug}.devfolio.co/`
           : absoluteUrl(item?.url, listingUrl),
         deadline: item?.apply_close_at ?? item?.ends_at ?? item?.starts_at ?? null,
+        // The listing payload only says online-or-not; it doesn't give a city
+        // for in-person events, or fee/prize figures — those live on each
+        // hackathon's own subdomain, which this scraper doesn't crawl.
+        location: item?.is_online === true ? 'Online'
+          : item?.is_online === false ? 'In-person' : null,
       });
       if (row) rows.push(row);
     } catch (error) {
@@ -122,6 +127,7 @@ export function parseHtml(html) {
         source_url: href,
         deadline: $el.find('[class*="date"], time').first().attr('datetime')
           ?? $el.find('[class*="date"], time').first().text(),
+        location: $el.find('[class*="location"], [class*="venue"]').first().text(),
       });
       if (row) rows.push(row);
     } catch (error) {

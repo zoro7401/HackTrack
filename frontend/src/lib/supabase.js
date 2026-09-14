@@ -28,7 +28,8 @@ export const HACKATHON_FIELDS = [
 ].join(', ');
 
 export const DISCOVERED_FIELDS = [
-  'id', 'name', 'platform', 'source_url', 'deadline', 'scraped_at', 'added_to_tracker',
+  'id', 'name', 'platform', 'source_url', 'deadline', 'location', 'entry_fee',
+  'prize_money', 'scraped_at', 'added_to_tracker',
 ].join(', ');
 
 export const STATUSES = ['registered', 'shortlisted', 'submitted', 'completed', 'missed'];
