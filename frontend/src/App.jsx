@@ -45,12 +45,21 @@ export default function App() {
 
   /** Copy a discovered listing into the tracker, then mark it as taken. */
   async function handleAddFromDiscovery(find) {
+    // The tracker has no location/fee/prize columns of its own — they ride
+    // along as a note instead of getting silently dropped on the way in.
+    const details = [
+      find.location ? `Location: ${find.location}` : null,
+      find.entry_fee ? `Entry fee: ${find.entry_fee}` : null,
+      find.prize_money ? `Prize money: ${find.prize_money}` : null,
+    ].filter(Boolean).join('\n');
+
     const result = await addHackathon({
       name: find.name,
       platform: find.platform,
       source_url: find.source_url,
       registration_deadline: find.deadline ?? '',
       status: 'registered',
+      notes: details,
     });
     if (!result.ok) return result;
     return markAdded(find.id);

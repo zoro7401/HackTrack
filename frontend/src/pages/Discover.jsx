@@ -2,6 +2,11 @@ import { useMemo, useState } from 'react';
 import Icon from '../components/Icon.jsx';
 import { formatDate, describeDays, daysUntil, sortByUrgency } from '../lib/dates.js';
 
+/** A blank or missing fee reads the same as an explicit "Free". */
+function isFree(entryFee) {
+  return !entryFee || entryFee.trim().toLowerCase() === 'free';
+}
+
 /**
  * What the scraper found on the public listing sites, newest first, with a
  * one-click copy into the tracker.
@@ -12,6 +17,10 @@ import { formatDate, describeDays, daysUntil, sortByUrgency } from '../lib/dates
 export default function Discover({ discovered, loading, error, onAddToTracker, onRefresh }) {
   const [platform, setPlatform] = useState('all');
   const [hideAdded, setHideAdded] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [location, setLocation] = useState('all');
+  const [freeOnly, setFreeOnly] = useState(false);
+  const [hasPrizeOnly, setHasPrizeOnly] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [failure, setFailure] = useState(null);
 
@@ -20,17 +29,29 @@ export default function Discover({ discovered, loading, error, onAddToTracker, o
     [discovered],
   );
 
+  const locations = useMemo(
+    () => [...new Set(discovered.map((d) => d.location).filter(Boolean))].sort(),
+    [discovered],
+  );
+
+  const activeFilterCount = [
+    location !== 'all', freeOnly, hasPrizeOnly,
+  ].filter(Boolean).length;
+
   const visible = useMemo(() => {
     const filtered = discovered.filter((d) => {
       if (platform !== 'all' && d.platform !== platform) return false;
       if (hideAdded && d.added_to_tracker) return false;
+      if (location !== 'all' && d.location !== location) return false;
+      if (freeOnly && !isFree(d.entry_fee)) return false;
+      if (hasPrizeOnly && !d.prize_money) return false;
       return true;
     });
     // Reuse the tracker's sort: deadline urgency is the right order here too.
     return sortByUrgency(
       filtered.map((d) => ({ ...d, registration_deadline: d.deadline })),
     );
-  }, [discovered, platform, hideAdded]);
+  }, [discovered, platform, hideAdded, location, freeOnly, hasPrizeOnly]);
 
   async function handleAdd(find) {
     setBusyId(find.id);
@@ -106,7 +127,54 @@ export default function Discover({ discovered, loading, error, onAddToTracker, o
             >
               Hide added
             </button>
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={filtersOpen}
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((v) => !v)}
+            >
+              <Icon name="filter" size={12} /> Filters
+              {activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+            </button>
           </div>
+
+          {filtersOpen ? (
+            <div className="filters filters--panel">
+              <label className="field__label" htmlFor="find-location">
+                Location
+              </label>
+              <select
+                id="find-location"
+                className="select"
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+              >
+                <option value="all">All locations</option>
+                {locations.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={freeOnly}
+                onClick={() => setFreeOnly((v) => !v)}
+              >
+                Free entry only
+              </button>
+
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={hasPrizeOnly}
+                onClick={() => setHasPrizeOnly((v) => !v)}
+              >
+                Has prize money
+              </button>
+            </div>
+          ) : null}
 
           {visible.length === 0 ? (
             <div className="empty">
@@ -128,6 +196,19 @@ export default function Discover({ discovered, loading, error, onAddToTracker, o
                         <span>{describeDays(days)}</span>
                         {find.deadline ? <span>{formatDate(find.deadline)}</span> : null}
                       </p>
+                      {find.location || find.entry_fee || find.prize_money ? (
+                        <p className="find__meta find__meta--details">
+                          {find.location ? (
+                            <span><Icon name="map-pin" size={12} /> {find.location}</span>
+                          ) : null}
+                          {find.entry_fee ? (
+                            <span><Icon name="tag" size={12} /> {find.entry_fee}</span>
+                          ) : null}
+                          {find.prize_money ? (
+                            <span><Icon name="trophy" size={12} /> {find.prize_money}</span>
+                          ) : null}
+                        </p>
+                      ) : null}
                     </div>
 
                     {find.source_url ? (

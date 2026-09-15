@@ -481,8 +481,18 @@ a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset:
 .find__name { font-size: var(--text-sm); font-weight: 600; overflow-wrap: anywhere; }
 .find__meta { display: flex; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-faint); flex-wrap: wrap; }
 .find__meta span { font-family: var(--font-mono); }
+.find__meta--details span { display: inline-flex; align-items: center; gap: 4px; }
 
 .filters { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-bottom: var(--space-3); }
+
+.filters--panel {
+  align-items: center;
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.filters--panel .select { min-height: 30px; padding: 2px var(--space-2); }
 
 .chip {
   appearance: none;

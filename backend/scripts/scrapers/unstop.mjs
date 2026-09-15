@@ -56,6 +56,9 @@ export function parseApi(payload) {
         // Unstop calls the registration close `regnRequirements.end_regn_dt`,
         // with `end_date` as the older spelling.
         deadline: item?.regnRequirements?.end_regn_dt ?? item?.end_date ?? null,
+        location: locationOf(item),
+        entryFee: entryFeeOf(item),
+        prizeMoney: prizeMoneyOf(item),
       });
       if (row) rows.push(row);
     } catch (error) {
@@ -63,6 +66,54 @@ export function parseApi(payload) {
     }
   }
   return rows;
+}
+
+/**
+ * Unstop marks online opportunities with `region: 'online'`; everything else
+ * carries a city/state in `address_with_country_logo`.
+ *
+ * @param {any} item
+ * @returns {string|null}
+ */
+function locationOf(item) {
+  if (item?.region === 'online') return 'Online';
+
+  const address = item?.address_with_country_logo;
+  const parts = [address?.city, address?.state].filter(Boolean);
+  if (parts.length > 0) return parts.join(', ');
+  return address?.country?.name ?? null;
+}
+
+/**
+ * `payment_services` carries the actual amount charged; `isPaid` is the
+ * fallback for a listing that names no figure.
+ *
+ * @param {any} item
+ * @returns {string|null}
+ */
+function entryFeeOf(item) {
+  const amount = item?.payment_services?.[0]?.amount;
+  if (typeof amount === 'number' && amount > 0) return `₹${amount.toLocaleString('en-IN')}`;
+  if (item?.isPaid === false) return 'Free';
+  return null;
+}
+
+/**
+ * `prizes` is a list of cash line items (rank prizes, or a single "Prize
+ * Pool" total) — summed, since the dashboard wants one figure, not a table.
+ *
+ * @param {any} item
+ * @returns {string|null}
+ */
+function prizeMoneyOf(item) {
+  const prizes = item?.prizes;
+  if (!Array.isArray(prizes) || prizes.length === 0) return null;
+
+  const total = prizes.reduce((sum, prize) => (
+    typeof prize?.cash === 'number' ? sum + prize.cash : sum
+  ), 0);
+  if (total <= 0) return null;
+  return `₹${total.toLocaleString('en-IN')}`;
 }
 
 /**
@@ -87,6 +138,11 @@ export function parseHtml(html) {
         platform,
         source_url: absoluteUrl($el.attr('href'), listingUrl),
         deadline: $el.find('[class*="date"], [class*="deadline"]').first().text(),
+        // The HTML fallback only runs when the API is unreachable — markup
+        // class names are a much weaker signal, so a miss here is expected.
+        location: $el.find('[class*="location"], [class*="region"]').first().text(),
+        entryFee: $el.find('[class*="fee"], [class*="price"]').first().text(),
+        prizeMoney: $el.find('[class*="prize"]').first().text(),
       });
       if (row) rows.push(row);
     } catch (error) {

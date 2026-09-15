@@ -79,7 +79,9 @@ async function main() {
   if (dryRun) {
     for (const row of all) {
       console.log(`  [${row.platform}] ${row.name}`);
-      console.log(`      ${row.deadline ?? 'no deadline'} · ${row.source_url}`);
+      console.log(`      ${row.deadline ?? 'no deadline'} · ${row.location ?? 'no location'}`
+        + ` · ${row.entryFee ?? 'no fee listed'} · ${row.prizeMoney ?? 'no prize listed'}`);
+      console.log(`      ${row.source_url}`);
     }
     console.log(`\n${all.length} rows — nothing written (dry run).`);
     return;
@@ -122,6 +124,9 @@ async function write(rows) {
         platform: row.platform,
         source_url: row.source_url,
         deadline: row.deadline,
+        location: row.location,
+        entry_fee: row.entryFee,
+        prize_money: row.prizeMoney,
         scraped_at: new Date().toISOString(),
       })),
       { onConflict: 'source_url' },

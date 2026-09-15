@@ -105,7 +105,22 @@ describe('normalizeRow', () => {
       platform: 'unstop',
       source_url: 'https://unstop.com/o/abc123',
       deadline: '2026-03-14',
+      location: null,
+      entryFee: null,
+      prizeMoney: null,
     });
+  });
+
+  it('cleans location, entry fee and prize money when given', () => {
+    const row = normalizeRow({
+      ...base,
+      location: '  Bengaluru,  Karnataka  ',
+      entryFee: '₹500',
+      prizeMoney: '₹1,50,000',
+    });
+    expect(row.location).toBe('Bengaluru, Karnataka');
+    expect(row.entryFee).toBe('₹500');
+    expect(row.prizeMoney).toBe('₹1,50,000');
   });
 
   it('keeps the row when only the deadline is unreadable', () => {
