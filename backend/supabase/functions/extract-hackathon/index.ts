@@ -1,19 +1,22 @@
 /**
- * extract-hackathon — turns a pasted hackathon listing into structured fields.
+ * extract-hackathon — multi-modal extraction for hackathon listings.
  *
  * Deno / Supabase Edge Function.
  *
- * The contract with the frontend, in one line: **this function never makes the
- * user lose their paste.** Every failure path returns 200 with a reason, and the
- * app drops the user into the manual form with their text intact. A 500 here
- * would surface as a scary error for what is a perfectly normal situation —
- * no API key configured yet.
+ * Supports three input modes:
+ *  1. Text: Copied text, description, or caption
+ *  2. URL: Fetches public listing page server-side and extracts details
+ *  3. Image/Screenshot: Vision-capable extraction for flyers/graphics (e.g. Instagram flyers)
+ *
+ * The contract with the frontend: **this function never makes the user lose their input.**
+ * Every failure path returns 200 with configured/reason info, allowing the app
+ * to drop the user into the manual form with their input intact.
  *
  * Configure with:
  *   supabase secrets set GROQ_API_KEY=gsk_...
  *   # or:
- *   supabase secrets set LLM_API_KEY=gsk_...
- *   supabase secrets set LLM_MODEL=llama-3.3-70b-versatile  # optional
+ *   supabase secrets set LLM_API_KEY=...
+ *   supabase secrets set LLM_MODEL=...  # optional
  *
  * Deploy with:
  *   supabase functions deploy extract-hackathon
@@ -38,10 +41,15 @@ const isOpenAICompatible = isGroq ||
   LLM_URL.includes('openrouter.ai');
 
 const DEFAULT_MODEL = isGroq || LLM_URL.includes('groq.com')
-  ? 'groq/compound-mini'
+  ? 'llama-3.3-70b-versatile'
+  : (isOpenAICompatible ? 'gpt-4o-mini' : 'claude-3-5-haiku-20241022');
+
+const DEFAULT_VISION_MODEL = isGroq || LLM_URL.includes('groq.com')
+  ? 'llama-3.2-11b-vision-preview'
   : (isOpenAICompatible ? 'gpt-4o-mini' : 'claude-3-5-haiku-20241022');
 
 const LLM_MODEL = Deno.env.get('LLM_MODEL') ?? DEFAULT_MODEL;
+const LLM_VISION_MODEL = Deno.env.get('LLM_VISION_MODEL') ?? DEFAULT_VISION_MODEL;
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -70,68 +78,138 @@ const DATE_FIELDS = new Set([
   'event_end',
 ]);
 
-const SYSTEM_PROMPT = `You extract structured data from hackathon listings.
+const SYSTEM_PROMPT = `You extract structured data from hackathon listings, web pages, or event flyer screenshots.
 
-Return ONLY a JSON object, no prose and no markdown fence. Use these keys:
+Return ONLY a valid JSON object, no prose, no commentary, and no markdown fences. Use these exact keys:
 ${FIELDS.map((f) => `  "${f}"`).join('\n')}
 
 Rules:
-- Use null for anything the text does not state. Never guess, and never infer a
-  date from context. A wrong date is far worse than a missing one, because the
-  app will show it as a confident deadline.
-- Dates must be exactly YYYY-MM-DD. If the text gives a day without a year, use
-  the year that makes the date fall in the future relative to today. If that is
-  still ambiguous, return null.
-- "platform" is the site hosting it (Unstop, Devfolio, Devpost, HackerEarth,
-  MLH, or the organiser's own name).
-- "team_size" is free text, e.g. "2-4" or "solo or up to 6".
-- "round_dates" is free text describing multi-round schedules.
-- "problem_statement" is the theme or problem, trimmed to its essentials.`;
+- Use null for anything the text/image does not state. Never guess, and never infer a date from context. A wrong date is far worse than a missing one.
+- Dates must be formatted strictly as YYYY-MM-DD. If given a day without a year, use the year that puts the date in the near future relative to today. If ambiguous, return null.
+- "platform" is the host site/organizer (e.g., Unstop, Devfolio, Devpost, HackerEarth, MLH, or company/institution name).
+- "team_size" is free text, e.g. "1-4" or "solo or up to 6".
+- "round_dates" is free text describing multi-round timelines or schedules.
+- "problem_statement" is the theme, tracks, or problem statement, concisely summarized.`;
+
+interface RequestPayload {
+  mode?: 'text' | 'url' | 'image';
+  text?: string;
+  url?: string;
+  image?: string; // base64 data string (with or without data URL prefix)
+  mimeType?: string;
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: CORS });
   }
 
-  // Not configured is a supported state, not an error. Say so plainly and let
-  // the app fall back to the manual form.
   if (!LLM_API_KEY) {
     return json({
       configured: false,
-      reason: 'No GROQ_API_KEY or LLM_API_KEY is set on this function.',
+      reason: 'No LLM_API_KEY or GROQ_API_KEY is configured on this function.',
     });
   }
 
-  let text: string;
+  let body: RequestPayload;
   try {
-    const body = await req.json();
-    text = String(body?.text ?? '').trim();
+    body = await req.json();
   } catch {
-    return json({ configured: true, fields: null, reason: 'Could not read the request body.' });
+    return json({ configured: true, fields: null, reason: 'Could not parse request body.' });
   }
 
-  if (!text) {
-    return json({ configured: true, fields: null, reason: 'No text was sent.' });
-  }
-
-  // A whole page of pasted HTML costs tokens and adds nothing — the useful
-  // details are always near the top.
-  const excerpt = text.slice(0, 12000);
+  const mode = body.mode || (body.image ? 'image' : (body.url ? 'url' : 'text'));
   const today = new Date().toISOString().slice(0, 10);
+
+  let sourceUrl = body.url || '';
+  let extractedContent = '';
+  let base64Image = '';
+  let imageMime = body.mimeType || 'image/png';
+
+  if (mode === 'url') {
+    const rawUrl = String(body.url ?? '').trim();
+    if (!rawUrl) {
+      return json({ configured: true, fields: null, reason: 'No URL was provided.' });
+    }
+    sourceUrl = rawUrl;
+
+    try {
+      const pageText = await fetchPageContent(rawUrl);
+      if (!pageText || pageText.length < 20) {
+        return json({
+          configured: true,
+          fields: { source_url: rawUrl },
+          reason: 'Could not fetch enough readable content from this URL.',
+        });
+      }
+      extractedContent = `Source URL: ${rawUrl}\n\nWeb Page Content:\n${pageText.slice(0, 12000)}`;
+    } catch (fetchErr) {
+      return json({
+        configured: true,
+        fields: { source_url: rawUrl },
+        reason: `Failed to fetch page (${fetchErr instanceof Error ? fetchErr.message : 'network error'}).`,
+      });
+    }
+  } else if (mode === 'image') {
+    let rawImage = String(body.image ?? '').trim();
+    if (!rawImage) {
+      return json({ configured: true, fields: null, reason: 'No image data was provided.' });
+    }
+
+    if (rawImage.startsWith('data:')) {
+      const matches = rawImage.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        imageMime = matches[1];
+        base64Image = matches[2];
+      } else {
+        base64Image = rawImage.split(',')[1] || rawImage;
+      }
+    } else {
+      base64Image = rawImage;
+    }
+  } else {
+    // Mode is text
+    extractedContent = String(body.text ?? '').trim().slice(0, 12000);
+    if (!extractedContent) {
+      return json({ configured: true, fields: null, reason: 'No text was provided.' });
+    }
+  }
 
   try {
     let response: Response;
+    const isVision = mode === 'image' && Boolean(base64Image);
+    const activeModel = isVision ? LLM_VISION_MODEL : LLM_MODEL;
+
     if (isOpenAICompatible) {
+      let userMessageContent: unknown;
+
+      if (isVision) {
+        userMessageContent = [
+          {
+            type: 'text',
+            text: 'Extract all hackathon details from this flyer or graphic image into the requested JSON format.',
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${imageMime};base64,${base64Image}`,
+            },
+          },
+        ];
+      } else {
+        userMessageContent = extractedContent;
+      }
+
       const payload: Record<string, unknown> = {
-        model: LLM_MODEL,
+        model: activeModel,
         max_tokens: 1024,
         messages: [
           { role: 'system', content: `${SYSTEM_PROMPT}\n\nToday is ${today}.` },
-          { role: 'user', content: excerpt },
+          { role: 'user', content: userMessageContent },
         ],
       };
 
-      if (isGroq || LLM_URL.includes('groq.com') || LLM_URL.includes('openai.com')) {
+      if (!isVision && (isGroq || LLM_URL.includes('groq.com') || LLM_URL.includes('openai.com'))) {
         payload.response_format = { type: 'json_object' };
       }
 
@@ -144,6 +222,28 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify(payload),
       });
     } else {
+      // Anthropic format
+      let userMessages: unknown[];
+
+      if (isVision) {
+        userMessages = [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: imageMime,
+              data: base64Image,
+            },
+          },
+          {
+            type: 'text',
+            text: 'Extract all hackathon details from this flyer or graphic image into the requested JSON format.',
+          },
+        ];
+      } else {
+        userMessages = [{ type: 'text', text: extractedContent }];
+      }
+
       response = await fetch(LLM_URL, {
         method: 'POST',
         headers: {
@@ -152,68 +252,104 @@ Deno.serve(async (req: Request) => {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: LLM_MODEL,
+          model: activeModel,
           max_tokens: 1024,
           system: `${SYSTEM_PROMPT}\n\nToday is ${today}.`,
-          messages: [{ role: 'user', content: excerpt }],
+          messages: [{ role: 'user', content: userMessages }],
         }),
       });
     }
 
     if (!response.ok) {
       const detail = await response.text();
-      console.error('LLM call failed', response.status, detail.slice(0, 500));
+      console.error('LLM request failed:', response.status, detail.slice(0, 500));
       return json({
         configured: true,
-        fields: null,
-        reason: `The extractor returned ${response.status}.`,
+        fields: sourceUrl ? { source_url: sourceUrl } : null,
+        reason: `Extraction service responded with status ${response.status}.`,
       });
     }
 
-    const payload = await response.json();
-    const raw = isOpenAICompatible
-      ? payload?.choices?.[0]?.message?.content ?? ''
-      : payload?.content?.[0]?.text ?? '';
-    const parsed = parseJsonObject(raw);
+    const resData = await response.json();
+    const rawText = isOpenAICompatible
+      ? resData?.choices?.[0]?.message?.content ?? ''
+      : resData?.content?.[0]?.text ?? '';
 
+    const parsed = parseJsonObject(rawText);
     if (!parsed) {
       return json({
         configured: true,
-        fields: null,
-        reason: 'The extractor did not return usable JSON.',
+        fields: sourceUrl ? { source_url: sourceUrl } : null,
+        reason: 'Could not parse structured fields from extractor response.',
       });
     }
 
     const { fields, dropped } = sanitize(parsed);
 
+    // If source_url was provided directly in request, preserve it if model didn't find one
+    if (sourceUrl && !fields.source_url) {
+      fields.source_url = sourceUrl;
+    }
+
     return json({
       configured: true,
       fields,
       warning: dropped.length > 0
-        ? `Couldn't read ${dropped.join(', ')} — fill those in yourself.`
+        ? `Could not confidently determine: ${dropped.join(', ')}.`
         : undefined,
     });
   } catch (error) {
-    console.error('extract-hackathon failed', error);
+    console.error('Extraction handler failed:', error);
     return json({
       configured: true,
-      fields: null,
-      reason: 'The extractor could not be reached.',
+      fields: sourceUrl ? { source_url: sourceUrl } : null,
+      reason: 'Extraction service encountered a network or processing error.',
     });
   }
 });
 
-/** Always 200 — see the contract note at the top of this file. */
+async function fetchPageContent(url: string): Promise<string> {
+  const resp = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+    redirect: 'follow',
+  });
+
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+
+  const html = await resp.text();
+
+  // Basic HTML cleanup without heavy dependencies
+  const bodyText = html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+    .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, ' ')
+    .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, ' ')
+    .replace(/<header\b[^<]*(?:(?!<\/header>)<[^<]*)*<\/header>/gi, ' ')
+    .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return bodyText;
+}
+
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     headers: { ...CORS, 'content-type': 'application/json' },
   });
 }
 
-/**
- * Pull a JSON object out of the model's reply, tolerating a markdown fence or
- * a stray sentence around it.
- */
 function parseJsonObject(raw: string): Record<string, unknown> | null {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = (fenced ? fenced[1] : raw).trim();
@@ -224,17 +360,13 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(candidate.slice(start, end + 1));
     return typeof parsed === 'object' && parsed !== null
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Keep only known fields with sane values. The model is a helpful guesser, not
- * a source of truth — a malformed date it invents must never reach the DB.
- */
 function sanitize(input: Record<string, unknown>) {
   const fields: Record<string, string> = {};
   const dropped: string[] = [];
