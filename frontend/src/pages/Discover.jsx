@@ -16,6 +16,7 @@ function isFree(entryFee) {
  */
 export default function Discover({ discovered, loading, error, onAddToTracker, onRefresh }) {
   const [platform, setPlatform] = useState('all');
+  const [availability, setAvailability] = useState('all');
   const [hideAdded, setHideAdded] = useState(true);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [location, setLocation] = useState('all');
@@ -45,13 +46,19 @@ export default function Discover({ discovered, loading, error, onAddToTracker, o
       if (location !== 'all' && d.location !== location) return false;
       if (freeOnly && !isFree(d.entry_fee)) return false;
       if (hasPrizeOnly && !d.prize_money) return false;
+      if (availability !== 'all') {
+        // No deadline recorded reads as still open, same as everywhere else urgency is computed.
+        const isOpen = daysUntil(d.deadline) === null || daysUntil(d.deadline) >= 0;
+        if (availability === 'open' && !isOpen) return false;
+        if (availability === 'closed' && isOpen) return false;
+      }
       return true;
     });
     // Reuse the tracker's sort: deadline urgency is the right order here too.
     return sortByUrgency(
       filtered.map((d) => ({ ...d, registration_deadline: d.deadline })),
     );
-  }, [discovered, platform, hideAdded, location, freeOnly, hasPrizeOnly]);
+  }, [discovered, platform, hideAdded, location, freeOnly, hasPrizeOnly, availability]);
 
   async function handleAdd(find) {
     setBusyId(find.id);
@@ -118,6 +125,22 @@ export default function Discover({ discovered, loading, error, onAddToTracker, o
                 {name}
               </button>
             ))}
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={availability === 'open'}
+              onClick={() => setAvailability((v) => (v === 'open' ? 'all' : 'open'))}
+            >
+              Ongoing
+            </button>
+            <button
+              type="button"
+              className="chip"
+              aria-pressed={availability === 'closed'}
+              onClick={() => setAvailability((v) => (v === 'closed' ? 'all' : 'closed'))}
+            >
+              Closed registration
+            </button>
             <button
               type="button"
               className="chip"
