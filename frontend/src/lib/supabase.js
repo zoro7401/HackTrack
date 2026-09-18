@@ -32,9 +32,12 @@ export const DISCOVERED_FIELDS = [
   'prize_money', 'scraped_at', 'added_to_tracker',
 ].join(', ');
 
-export const STATUSES = ['registered', 'shortlisted', 'submitted', 'completed', 'missed'];
+export const STATUSES = [
+  'unregistered', 'registered', 'shortlisted', 'submitted', 'completed', 'missed',
+];
 
 export const STATUS_LABELS = {
+  unregistered: 'Unregistered',
   registered: 'Registered',
   shortlisted: 'Shortlisted',
   submitted: 'Submitted',
@@ -62,7 +65,7 @@ export function describeError(error) {
     return 'The tables don’t exist yet. Run the migration in backend/supabase/migrations/.';
   }
   if (error.code === '23514') {
-    return 'That status isn’t one of the five allowed values.';
+    return 'That status isn’t one of the allowed values.';
   }
   if (error.code === '23505') {
     return 'That one is already in the tracker.';
