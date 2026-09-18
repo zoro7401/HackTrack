@@ -50,7 +50,7 @@ npm run dev     # starts Vite dev server at http://localhost:5173
 ## Features
 
 ### 1. Tracker Dashboard
-- **Grouped by Status**: `registered`, `shortlisted`, `submitted`, `completed`, `missed`.
+- **Grouped by Status**: `unregistered`, `registered`, `shortlisted`, `submitted`, `completed`, `missed`.
 - **Urgency Color Spine & Header Pip**:
   - 🔴 **Red (Urgent)**: Nearest deadline `< 2 days`
   - 🟡 **Yellow (Soon)**: Nearest deadline `< 7 days`

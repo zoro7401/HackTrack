@@ -87,7 +87,8 @@ See `.claude/rules/react-conventions.md` for component-level detail.
 
 ## Product rules that aren't obvious from the code
 
-- Status values are exactly: `registered`, `shortlisted`, `submitted`, `completed`, `missed`.
+- Status values are exactly: `unregistered`, `registered`, `shortlisted`, `submitted`,
+  `completed`, `missed`.
 - Deadline urgency: red < 2 days, yellow < 7 days, green beyond that or no deadline.
   Urgency is computed from the *nearest upcoming* deadline among registration and
   submission, not whichever field happens to be set.

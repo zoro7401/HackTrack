@@ -44,8 +44,11 @@ const DEFAULT_MODEL = isGroq || LLM_URL.includes('groq.com')
   ? 'llama-3.3-70b-versatile'
   : (isOpenAICompatible ? 'gpt-4o-mini' : 'claude-3-5-haiku-20241022');
 
+// Groq rotates its vision lineup often (llama-3.2-11b-vision-preview and
+// llama-4-scout-17b-16e-instruct were both retired within the last year) —
+// check console.groq.com/docs/vision if image extraction starts failing again.
 const DEFAULT_VISION_MODEL = isGroq || LLM_URL.includes('groq.com')
-  ? 'llama-3.2-11b-vision-preview'
+  ? 'qwen/qwen3.6-27b'
   : (isOpenAICompatible ? 'gpt-4o-mini' : 'claude-3-5-haiku-20241022');
 
 const LLM_MODEL = Deno.env.get('LLM_MODEL') ?? DEFAULT_MODEL;
@@ -324,6 +327,13 @@ async function fetchPageContent(url: string): Promise<string> {
 
   const html = await resp.text();
 
+  // Most listing platforms render the actual details client-side, so the
+  // stripped visible text below is often just app-shell chrome. Structured
+  // data embedded in the initial HTML — JSON-LD (SEO markup for events) and
+  // Next.js's __NEXT_DATA__ payload — usually still carries the real fields
+  // even before anything hydrates, so pull those out first.
+  const structured = extractStructuredData(html);
+
   // Basic HTML cleanup without heavy dependencies
   const bodyText = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
@@ -341,7 +351,26 @@ async function fetchPageContent(url: string): Promise<string> {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return bodyText;
+  return [structured, bodyText].filter(Boolean).join('\n\n');
+}
+
+/** JSON-LD and Next.js SSR payloads found in the raw HTML, each capped so one huge blob can't crowd out everything else. */
+function extractStructuredData(html: string): string {
+  const blobs: string[] = [];
+
+  for (const match of html.matchAll(
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+  )) {
+    const raw = match[1]?.trim();
+    if (raw) blobs.push(`JSON-LD data:\n${raw.slice(0, 4000)}`);
+  }
+
+  const nextData = html.match(
+    /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+  )?.[1]?.trim();
+  if (nextData) blobs.push(`Next.js page data:\n${nextData.slice(0, 6000)}`);
+
+  return blobs.join('\n\n');
 }
 
 function json(body: unknown): Response {
