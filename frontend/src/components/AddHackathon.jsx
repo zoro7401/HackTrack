@@ -94,7 +94,7 @@ export default function AddHackathon({ onAdd, onClose }) {
         source_url: result.fields.source_url || (inputMode === 'url' ? urlInput.trim() : ''),
       });
       setNotice({
-        tone: 'ok',
+        tone: result.warning ? 'info' : 'ok',
         text: result.warning ?? 'Details extracted successfully. Please verify dates and fields before saving.',
       });
       setView('form');

@@ -46,9 +46,10 @@ const DEFAULT_MODEL = isGroq || LLM_URL.includes('groq.com')
 
 // Groq rotates its vision lineup often (llama-3.2-11b-vision-preview and
 // llama-4-scout-17b-16e-instruct were both retired within the last year) —
-// check console.groq.com/docs/vision if image extraction starts failing again.
+// verify against GET https://api.groq.com/openai/v1/models if image
+// extraction starts 404ing again; console.groq.com/docs/vision lags reality.
 const DEFAULT_VISION_MODEL = isGroq || LLM_URL.includes('groq.com')
-  ? 'qwen/qwen3.6-27b'
+  ? 'qwen/qwen3.8-27b'
   : (isOpenAICompatible ? 'gpt-4o-mini' : 'claude-3-5-haiku-20241022');
 
 const LLM_MODEL = Deno.env.get('LLM_MODEL') ?? DEFAULT_MODEL;
@@ -294,12 +295,25 @@ Deno.serve(async (req: Request) => {
       fields.source_url = sourceUrl;
     }
 
+    // Dates are the whole point of this app — a "success" that silently found
+    // none of them is worse than an honest failure, so call it out explicitly
+    // rather than letting it read as a clean extraction.
+    const noDatesFound = !fields.registration_deadline && !fields.submission_deadline
+      && !fields.event_start && !fields.event_end;
+
+    const warnings: string[] = [];
+    if (dropped.length > 0) warnings.push(`Could not confidently determine: ${dropped.join(', ')}.`);
+    if (noDatesFound) {
+      const alternative = mode === 'url'
+        ? ' The page may need JavaScript to show them — try pasting the visible text or a screenshot instead.'
+        : '';
+      warnings.push(`No dates were found in this source.${alternative} Fill dates in manually.`);
+    }
+
     return json({
       configured: true,
       fields,
-      warning: dropped.length > 0
-        ? `Could not confidently determine: ${dropped.join(', ')}.`
-        : undefined,
+      warning: warnings.length > 0 ? warnings.join(' ') : undefined,
     });
   } catch (error) {
     console.error('Extraction handler failed:', error);
